@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="lib" path="lib/slee.jar" sourcepath="lib/jslee-1_1-fr-api.zip"/>
+	<classpathentry kind="lib" path="lib/DU/standard-components-du.jar/jars/standard-events-jar-2.7.0.FINAL.jar"/>
+	<classpathentry kind="lib" path="lib/DU/standard-components-du.jar/jars/standard-events11-jar-2.7.0.FINAL.jar"/>
+	<classpathentry kind="lib" path="lib/DU/standard-components-du.jar/jars/standard-profiles-jar-2.7.0.FINAL.jar"/>
+	<classpathentry kind="lib" path="lib/DU/standard-components-du.jar/jars/standard-profiles11-jar-2.7.0.FINAL.jar"/>
+	<classpathentry kind="lib" path="lib/mongo-2.10.1.jar"/>
+	<classpathentry kind="lib" path="lib/morphia-0.99.jar"/>
+	<classpathentry kind="lib" path="lib/PetriNets.jar"/>
+	<classpathentry kind="lib" path="lib/OperationsRepository.jar"/>
+	<classpathentry kind="output" path="classes"/>
+</classpath>
