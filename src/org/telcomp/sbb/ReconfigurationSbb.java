@@ -31,6 +31,14 @@ import datamodel.Token;
 public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	
 	private ServiceActivityFactory saf;
+	private Datastore petriNets;
+	private Datastore operationsRep;
+	private String serviceName;
+	private String operationName;
+	private Place reconfigInputPlace;
+	private Place reconfigOutputPlace;
+	private PetriNet retrievedPN;
+	private HashMap<String, String> reconfigurationInputs;
 
 	public void onServiceStartedEvent (ServiceStartedEvent  event, ActivityContextInterface aci) {
 		ServiceActivity sa = saf.getActivity();
@@ -41,34 +49,32 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			HashMap<String, String> reconfigInputs = new HashMap<String, String>();
 			reconfigInputs.put("ServiceName", "LinkedInJobNotificator");
 			reconfigInputs.put("operationName", "sendTwitterMessage");
+			//reconfigInputs.put("operationName", "getLinkedInJobs");
 			reconfigInputs.put("mainControlFlow", "4");
 			reconfigInputs.put("branchControlFlow1", "2");
 			reconfigInputs.put("branchControlFlow2", "2");
 			
-			//Reconfiguration Parameters
-			String operationName;
+			//Setting global Reconfiguration parameters
+			reconfigurationInputs = reconfigInputs;
+			serviceName = reconfigurationInputs.get("ServiceName");
 			ArrayList<Place> IOPlaces = new ArrayList<Place>();
-			Place reconfigInputPlace;
-			Place reconfigOutputPlace;
 			Operation reconfigOperation;
 			List<Operation> candidateOperations = new ArrayList<Operation>();
-			boolean outputsCheck;
-			boolean inputsCheck;
 			
 			//Retrieving Corresponding Petri Net from MongoDB
 			try {
 				Mongo mongo = new Mongo("localhost");
-				Datastore petriNets = new Morphia().createDatastore(mongo, "PetriNetsManager");
-				PetriNet retreivedPN = petriNets.get(PetriNet.class, reconfigInputs.get("ServiceName"));
-				System.out.println("Retreived Petri Net Name: "+retreivedPN.getName());
+				petriNets = new Morphia().createDatastore(mongo, "PetriNetsManager");
+				retrievedPN = petriNets.get(PetriNet.class, reconfigurationInputs.get("ServiceName"));
+				System.out.println("Retreived Petri Net Name: "+retrievedPN.getName());
 				
 				//Getting places from the service to be reconfigured
-				for (Place p : retreivedPN.getPlaces()){
-					if(p.getMainControlFlow() == Integer.parseInt(reconfigInputs.get("mainControlFlow"))){
+				for (Place p : retrievedPN.getPlaces()){
+					if(p.getMainControlFlow() == Integer.parseInt(reconfigurationInputs.get("mainControlFlow"))){
 						if(p.getBranchId() == 0){
 							IOPlaces.add(p);
 						} else{
-							if(compareBranchId(reconfigInputs, p)){
+							if(compareBranchId(p)){
 								IOPlaces.add(p);
 							}
 						}
@@ -94,7 +100,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 				}
 				
 				//Retrieving Operation object from MongoDB Operations Repository
-				Datastore operationsRep = new Morphia().createDatastore(mongo, "OperationsManager");
+				operationsRep = new Morphia().createDatastore(mongo, "OperationsManager");
 				operationName = IOPlaces.get(0).getName().substring(0, IOPlaces.get(0).getName().length() - 1);
 				reconfigOperation = operationsRep.find(Operation.class).field("operationName").equal(operationName).get();
 				System.out.println(" ");
@@ -108,16 +114,48 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 					if(op.getId() != reconfigOperation.getId()){
 						System.out.println("Candidate Operation retrieved for Repository: "+op.getOperationName());
 						//Outputs Analysis
-						outputsCheck = outputAnalysis(reconfigOperation, op);
+						Place candidateOutPl = new Place();
+						candidateOutPl = outputAnalysis(reconfigOperation, op, candidateOutPl);
 						//Inputs Analysis
-						inputsCheck = inputAnalysis(op, reconfigInputPlace, retreivedPN.getPlaces(), operationsRep);
+						Place candidateInPl = new Place();
+						candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
+						
 						System.out.println("******************RESULT*******************");
-						System.out.println("Outputs check: "+outputsCheck);
-						System.out.println("Inputs check: "+inputsCheck);
+						if(candidateOutPl != null){
+							System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
+							System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
+							System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
+							System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
+							System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
+							for(Token t: candidateOutPl.getTokens()){
+								System.out.println("Token Id: "+t.getIdentifier());
+								System.out.println("Token Source: "+t.getSource());
+								System.out.println("Token Destiny: "+t.getDestiny());
+							}
+							System.out.println(" ");
+						} else{
+							System.out.println("Outputs not satisfied");
+							System.out.println(" ");
+						}
+						
+						if(candidateInPl != null){
+							System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
+							System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
+							System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
+							System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
+							System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
+							for(Token t: candidateInPl.getTokens()){
+								System.out.println("Token Id: "+t.getIdentifier());
+								System.out.println("Token Source: "+t.getSource());
+								System.out.println("Token Destiny: "+t.getDestiny());
+							}
+						} else{
+							System.out.println("Inputs not satisfied");
+						}
 						System.out.println("******************RESULT*******************");
+						System.out.println(" ");
 					}
 				}
-			
 				mongo.close();
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -125,24 +163,31 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		}
 	}
 	
-	private boolean compareBranchId(HashMap<String, String> reconfig, Place p){
-		if(Integer.parseInt(reconfig.get("branchControlFlow"+Integer.toString(p.getBranchId()))) == p.getBranchControlFlow() 
-				&& p.getName().indexOf(reconfig.get("operationName")) >= 0){
+	private boolean compareBranchId(Place p){
+		if(Integer.parseInt(reconfigurationInputs.get("branchControlFlow"+Integer.toString(p.getBranchId()))) == p.getBranchControlFlow() 
+				&& p.getName().indexOf(reconfigurationInputs.get("operationName")) >= 0){
 			return true;
 		} else{
 			return false;
 		}
 	}
 	
-	private boolean outputAnalysis(Operation reconfigOp, Operation candidateOp){
+	private Place outputAnalysis(Operation reconfigOp, Operation candidateOp, Place candidateOutPl){
 		HashMap<String, String> outputsCheck = new HashMap<String, String>();
-		boolean check = true;
+		
+		candidateOutPl.setName(candidateOp.getOperationName() + getOpId(candidateOp));
+		candidateOutPl.setIdentifier(serviceName + "_" + candidateOutPl.getName() + "_OutputPlace");
+		candidateOutPl.setMainControlFlow(reconfigOutputPlace.getMainControlFlow());
+		candidateOutPl.setBranchId(reconfigOutputPlace.getBranchId());
+		candidateOutPl.setBranchControlFlow(reconfigOutputPlace.getBranchControlFlow());
 		
 		for(Output rout : reconfigOp.getOutputs()){
 			outputsCheck.put(rout.getOutputName(), "false");
 			for(Output cout: candidateOp.getOutputs()){
 				if(rout.getType().equals(cout.getType()) && (rout.getSubType().equals(cout.getSubType()) || 
-						rout.getSubType().equals("any")) && rout.getDataType().equals(cout.getDataType())){
+						rout.getSubType().equals("any"))){
+					Token t = getCandidateToken(cout, rout, candidateOutPl.getName(), outputsCheck.size()-1);
+					candidateOutPl.getTokens().add(t);
 					outputsCheck.put(rout.getOutputName(), "true");
 				}
 			}
@@ -155,42 +200,59 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			Entry<String, String> e = (Entry<String, String>) it.next();
 			System.out.println("Output: "+e.getKey()+" is satisfied? "+e.getValue());
 			if(e.getValue().equals("false")){
-				check = false;
+				candidateOutPl = null;
 			}
 		}
 		System.out.println("*******************OUTPUTS CHECK**********************");
-		return check;
+		return candidateOutPl;
 	}
 	
-	private boolean inputAnalysis(Operation candidateOp, Place reconfigInputPlace, ArrayList<Place> places, Datastore operationsRep){
+	private Place inputAnalysis(Operation candidateOp, ArrayList<Place> places, Place candidateInPl){
 		HashMap<String, String> inputsCheck = new HashMap<String, String>();
-		boolean check = true;
+		
+		candidateInPl.setName(candidateOp.getOperationName() + getOpId(candidateOp));
+		candidateInPl.setIdentifier(serviceName + "_" + candidateInPl.getName() + "_InputPlace");
+		candidateInPl.setMainControlFlow(reconfigInputPlace.getMainControlFlow());
+		candidateInPl.setBranchId(reconfigInputPlace.getBranchId());
+		candidateInPl.setBranchControlFlow(reconfigInputPlace.getBranchControlFlow());
 		
 		for(Input cin : candidateOp.getInputs()){
 			inputsCheck.put(cin.getInputName(), "false");
-			System.out.println("Candidate Input: "+cin.getInputName());
 		}
 		
 		if(inputsCheck.size() > 0){
 			for(Place p : places){
 				if((p.getMainControlFlow() < reconfigInputPlace.getMainControlFlow() || 
 						(p.getBranchId() != 0 && p.getBranchId() == reconfigInputPlace.getBranchId())) && 
-						(p.getIdentifier().indexOf("OutputPlace") >= 0 || p.getIdentifier().indexOf("StartPlace") >= 0)){
+						(p.getIdentifier().indexOf("OutputPlace") >= 0 || p.getIdentifier().indexOf("StartPlace") >= 0) && 
+						!p.getName().equals(reconfigInputPlace.getName())){
 					for(Token t : p.getTokens()){
-						Input i = getDestinyInput(t.getDestiny(), places, operationsRep);
+						Input i = getDestinyInput(t.getDestiny(), places);
 						if(i != null){
 							for(Input i0 : candidateOp.getInputs()){
 								if(i0.getType().equals(i.getType()) && (i0.getSubType().equals(i.getSubType()) 
-										|| i0.getSubType().equals("any")) && i0.getDataType().equals(i.getDataType())){
+										|| i0.getSubType().equals("any"))){
+									Token it = new Token(candidateInPl.getName()+"_InputToken"+candidateInPl.getTokens().size(), 
+											"input", i0.getDataType(), t.getDestiny(), i0.getInputName());
+									candidateInPl.getTokens().add(it);
 									inputsCheck.put(i0.getInputName(), "true");
 								}
 							}
 						}
 					}
 				}
+				boolean flag = true;
+				Iterator<Entry<String, String>> it = inputsCheck.entrySet().iterator();
+				while(it.hasNext()){
+					Entry<String, String> e = (Entry<String, String>) it.next();
+					if(e.getValue().equals("false")){
+						flag = false;
+					}
+				}
+				if(flag){break;}
 			}
 		} else{
-			check = false;
+			candidateInPl = null;
 		}
 		
 		System.out.println("*******************INTPUTS CHECK**********************");
@@ -199,14 +261,14 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			Entry<String, String> e = (Entry<String, String>) it.next();
 			System.out.println("Input: "+e.getKey()+" is satisfied? "+e.getValue());
 			if(e.getValue().equals("false")){
-				check = false;
+				candidateInPl = null;
 			}
 		}
 		System.out.println("*******************INTPUTS CHECK**********************");
-		return check;
+		return candidateInPl;
 	}
 	
-	private Input getDestinyInput(String destiny, ArrayList<Place> places, Datastore operationsRep){
+	private Input getDestinyInput(String destiny, ArrayList<Place> places){
 		Input in = null;
 		
 		main: for(Place p : places){
@@ -224,6 +286,27 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			}
 		}
 		return in;
+	}
+	
+	private int getOpId(Operation op){
+		int i = 0;
+		
+		for(Place p : retrievedPN.getPlaces()){
+			if(p.getIdentifier().indexOf("InputPlace") >= 0 && p.getName().indexOf(op.getOperationName()) >= 0){
+				i++;
+			}
+		}	
+		return i;
+	}
+	
+	private Token getCandidateToken(Output cout, Output rout, String candidatePlaceName, int size){
+		Token rtoken = new Token(candidatePlaceName+"_OutputToken"+size, "output", cout.getDataType(), cout.getOutputName(), "");
+		for(Token t : reconfigOutputPlace.getTokens()){
+			if(t.getSource().equals(rout.getOutputName())){
+				rtoken.setDestiny(t.getDestiny());
+			}
+		}
+		return rtoken;
 	}
 	
 	// TODO: Perform further operations if required in these methods.
