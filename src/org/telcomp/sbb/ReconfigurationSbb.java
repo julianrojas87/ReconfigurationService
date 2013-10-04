@@ -2,7 +2,6 @@ package org.telcomp.sbb;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map.Entry;
 
@@ -43,6 +42,8 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	public void onServiceStartedEvent (ServiceStartedEvent  event, ActivityContextInterface aci) {
 		ServiceActivity sa = saf.getActivity();
 		if(sa.equals(aci.getActivity())){
+			
+			long l = System.currentTimeMillis();
 			aci.detach(this.sbbContext.getSbbLocalObject());
 			
 			//Simulating Input obtained from Monitoring Service
@@ -111,52 +112,50 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 				candidateOperations = operationsRep.find(Operation.class).field("category").equal(reconfigOperation.getCategory()).asList();
 				for(Operation op : candidateOperations){
 					//Discarding reconfigurated Operation as a candidate
-					if(op.getId() != reconfigOperation.getId()){
+					if(op.getId() != reconfigOperation.getId() && !(op.getOperationName().indexOf("Telco") >= 0)){
 						System.out.println("Candidate Operation retrieved for Repository: "+op.getOperationName());
 						//Outputs Analysis
 						Place candidateOutPl = new Place();
 						candidateOutPl = outputAnalysis(reconfigOperation, op, candidateOutPl);
-						//Inputs Analysis
-						Place candidateInPl = new Place();
-						candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
-						
-						System.out.println("******************RESULT*******************");
 						if(candidateOutPl != null){
-							System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
-							System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
-							System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
-							System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
-							System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
-							for(Token t: candidateOutPl.getTokens()){
-								System.out.println("Token Id: "+t.getIdentifier());
-								System.out.println("Token Source: "+t.getSource());
-								System.out.println("Token Destiny: "+t.getDestiny());
-							}
-							System.out.println(" ");
-						} else{
-							System.out.println("Outputs not satisfied");
-							System.out.println(" ");
-						}
-						
-						if(candidateInPl != null){
-							System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
-							System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
-							System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
-							System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
-							System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
-							for(Token t: candidateInPl.getTokens()){
-								System.out.println("Token Id: "+t.getIdentifier());
-								System.out.println("Token Source: "+t.getSource());
-								System.out.println("Token Destiny: "+t.getDestiny());
-							}
-						} else{
+							//Inputs Analysis
+							Place candidateInPl = new Place();
+							candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
+							if(candidateInPl != null){
+								System.out.println("******************RESULT*******************");
+								System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
+								System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
+								System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
+								System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
+								System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
+								for(Token t: candidateOutPl.getTokens()){
+									System.out.println("Token Id: "+t.getIdentifier());
+									System.out.println("Token Source: "+t.getSource());
+									System.out.println("Token Destiny: "+t.getDestiny());
+								}
+								System.out.println(" ");
+								System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
+								System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
+								System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
+								System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
+								System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
+								for(Token t: candidateInPl.getTokens()){
+									System.out.println("Token Id: "+t.getIdentifier());
+									System.out.println("Token Source: "+t.getSource());
+									System.out.println("Token Destiny: "+t.getDestiny());
+								}
+								break;
+							} 
 							System.out.println("Inputs not satisfied");
 						}
-						System.out.println("******************RESULT*******************");
-						System.out.println(" ");
+						System.out.println("Outputs not satisfied");
+		                System.out.println(" ");
 					}
 				}
+				System.out.println("******************RESULT*******************");
+	            System.out.println(" ");
 				mongo.close();
+				System.out.println("Algorithm used time: " + (System.currentTimeMillis() - l) + "ms");
 			} catch (Exception e) {
 				e.printStackTrace();
 			}
@@ -193,16 +192,8 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			}
 		}
 		
-		Iterator<Entry<String, String>> it = outputsCheck.entrySet().iterator();
-		
 		System.out.println("*******************OUTPUTS CHECK**********************");
-		while(it.hasNext()){
-			Entry<String, String> e = (Entry<String, String>) it.next();
-			System.out.println("Output: "+e.getKey()+" is satisfied? "+e.getValue());
-			if(e.getValue().equals("false")){
-				candidateOutPl = null;
-			}
-		}
+		if(!checkIO(outputsCheck, true)){candidateOutPl = null;}
 		System.out.println("*******************OUTPUTS CHECK**********************");
 		return candidateOutPl;
 	}
@@ -241,29 +232,30 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 						}
 					}
 				}
-				boolean flag = true;
-				Iterator<Entry<String, String>> it = inputsCheck.entrySet().iterator();
-				while(it.hasNext()){
-					Entry<String, String> e = (Entry<String, String>) it.next();
-					if(e.getValue().equals("false")){
-						flag = false;
-					}
-				}
-				if(flag){break;}
+				if(checkIO(inputsCheck, false)){break;}
 			}
 		} else{
 			candidateInPl = null;
 		}
 		
-		System.out.println("*******************INTPUTS CHECK**********************");
-		Iterator<Entry<String, String>> it = inputsCheck.entrySet().iterator();
-		while(it.hasNext()){
-			Entry<String, String> e = (Entry<String, String>) it.next();
-			System.out.println("Input: "+e.getKey()+" is satisfied? "+e.getValue());
-			if(e.getValue().equals("false")){
-				candidateInPl = null;
+		//Verifying if a free GetDataAccessTelcoService could satisfy an unsatisfied input
+		if(!checkIO(inputsCheck, false)){
+			for(Entry<String, String> entry : inputsCheck.entrySet()) {
+				if(entry.getValue().equals("false")){
+					Input ddi = couldBeFromGetDataAccess(entry.getKey(), candidateOp);
+					Token dt = verifyPreviousDataAccess(candidateInPl);
+					if(entry.getValue().equals("false") && ddi != null && dt != null){
+						Token ntkn = new Token(candidateInPl.getName()+"_InputToken"+candidateInPl.getTokens().size(), 
+								"input", ddi.getDataType(), dt.getDestiny(), ddi.getInputName());
+						candidateInPl.getTokens().add(ntkn);
+						inputsCheck.put(entry.getKey(), "true");
+					}
+				}
 			}
 		}
+		
+		System.out.println("*******************INTPUTS CHECK**********************");
+		if(!checkIO(inputsCheck, true)){candidateInPl = null;}
 		System.out.println("*******************INTPUTS CHECK**********************");
 		return candidateInPl;
 	}
@@ -307,6 +299,85 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			}
 		}
 		return rtoken;
+	}
+	
+	private boolean checkIO(HashMap<String, String> ioCheck, boolean print){
+		boolean flag = true;
+		for(Entry<String, String> entry : ioCheck.entrySet()) {
+			if(print){
+				System.out.println(("Parameter " + entry.getKey() + " satisfied? " + entry.getValue()));
+			}
+			if (entry.getValue().equals("false")) {
+                flag = false;
+            }
+		}
+		return flag;
+	}
+	
+	private Input couldBeFromGetDataAccess(String inputName, Operation candidateOp){
+		Input ri = null;
+		
+		for(Input i : candidateOp.getInputs()){
+			if(i.getInputName().equals(inputName)){
+				switch(i.getSubType()){
+					case "email": {
+						ri = i; 
+						break;
+					}
+					case "linkedinid": {
+						ri = i; 
+						break;
+					}
+					case "twitterid": {
+						ri = i; 
+						break;
+					}
+					case "facebookid": {
+						ri = i; 
+						break;
+					}
+					case "caller": {
+						ri = i; 
+						break;
+					}
+					case "callee": {
+						ri = i; 
+						break;
+					}
+				}
+				break;
+			}
+		}
+		return ri;
+	}
+	
+	private Token verifyPreviousDataAccess(Place candidateInPl){
+		Token rt = null;
+		
+		main: for(Token t : reconfigInputPlace.getTokens()){
+			for(Place p : retrievedPN.getPlaces()){
+				if(p.getIdentifier().indexOf("OutputPlace") >= 0 && p.getName().indexOf("GetDataTelcoService") >= 0){
+					for(Token t1 : p.getTokens()){
+						if(t1.getDestiny().equals(t.getSource()) && verifyFreeDA(t1.getDestiny(), candidateInPl)){
+							rt = t1;		
+							break main;
+						}
+					}
+				}
+			}
+		}
+		return rt;
+	}
+	
+	private boolean verifyFreeDA(String destiny, Place candidateInPl){
+		boolean flag = true;
+		
+		for(Token t : candidateInPl.getTokens()){
+			if(t.getSource().equals(destiny)){
+				flag = false;
+			}
+		}
+		return flag;
 	}
 	
 	// TODO: Perform further operations if required in these methods.
