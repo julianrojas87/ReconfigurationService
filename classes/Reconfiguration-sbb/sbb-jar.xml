@@ -13,14 +13,21 @@
             </sbb-abstract-class>
         </sbb-classes>
         <event event-direction="Receive" initial-event="True">
-            <event-name>ServiceStartedEvent </event-name>
+            <event-name>StartReconfigurationEvent</event-name>
             <event-type-ref>
-                <event-type-name>
-                    javax.slee.serviceactivity.ServiceStartedEvent </event-type-name>
-                <event-type-vendor> javax.slee </event-type-vendor>
-                <event-type-version> 1.1 </event-type-version>
+                <event-type-name>org.telcomp.events.StartReconfigurationEvent</event-type-name>
+                <event-type-vendor>Telcomp2.0</event-type-vendor>
+                <event-type-version>1.0</event-type-version>
             </event-type-ref>
             <initial-event-select variable="ActivityContext"/>
+        </event>
+        <event event-direction="Fire" initial-event="False">
+            <event-name>EndReconfigurationEvent</event-name>
+            <event-type-ref>
+                <event-type-name>org.telcomp.events.EndReconfigurationEvent</event-type-name>
+                <event-type-vendor>Telcomp2.0</event-type-vendor>
+                <event-type-version>1.0</event-type-version>
+            </event-type-ref>
         </event>
     </sbb>
 </sbb-jar>

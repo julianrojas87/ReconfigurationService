@@ -35,10 +35,14 @@
     <target depends="init" name="all">
         <ant target="build-Reconfiguration-sbb"/>
         <ant target="build-reconfiguration-DU"/>
+        <ant target="build-StartReconfiguration-event"/>
+        <ant target="build-EndReconfiguration-event"/>
     </target>
     <target depends="init" name="clean">
         <ant target="clean-Reconfiguration-sbb"/>
         <ant target="clean-reconfiguration-DU"/>
+        <ant target="clean-StartReconfiguration-event"/>
+        <ant target="clean-EndReconfiguration-event"/>
     </target>
     <target depends="init" name="build-Reconfiguration-sbb">
         <mkdir dir="classes/Reconfiguration-sbb"/>
@@ -74,5 +78,39 @@
     <target name="clean-reconfiguration-DU">
         <delete file="jars/reconfiguration-DU.jar"/>
         <delete dir="classes/reconfiguration-DU"/>
+    </target>
+    <target depends="init" name="build-StartReconfiguration-event">
+        <mkdir dir="classes/StartReconfiguration-event"/>
+        <mkdir dir="jars/"/>
+        <javac destdir="classes/StartReconfiguration-event"
+            includes="org/telcomp/events/StartReconfigurationEvent.java" srcdir="src">
+            <classpath>
+                <path refid="slee"/>
+                <path refid="ExternalComponents"/>
+            </classpath>
+        </javac>
+        <eventjar classpath="classes/StartReconfiguration-event"
+            destfile="jars/StartReconfiguration-event.jar" eventjarxml="src/org/telcomp/events/StartReconfiguration-event-jar.xml"/>
+    </target>
+    <target name="clean-StartReconfiguration-event">
+        <delete file="jars/StartReconfiguration-event.jar"/>
+        <delete dir="classes/StartReconfiguration-event"/>
+    </target>
+    <target depends="init" name="build-EndReconfiguration-event">
+        <mkdir dir="classes/EndReconfiguration-event"/>
+        <mkdir dir="jars/"/>
+        <javac destdir="classes/EndReconfiguration-event"
+            includes="org/telcomp/events/EndReconfigurationEvent.java" srcdir="src">
+            <classpath>
+                <path refid="slee"/>
+                <path refid="ExternalComponents"/>
+            </classpath>
+        </javac>
+        <eventjar classpath="classes/EndReconfiguration-event"
+            destfile="jars/EndReconfiguration-event.jar" eventjarxml="src/org/telcomp/events/EndReconfiguration-event-jar.xml"/>
+    </target>
+    <target name="clean-EndReconfiguration-event">
+        <delete file="jars/EndReconfiguration-event.jar"/>
+        <delete dir="classes/EndReconfiguration-event"/>
     </target>
 </project>

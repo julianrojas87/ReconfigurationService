@@ -5,15 +5,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map.Entry;
 
-import javax.naming.Context;
-import javax.naming.InitialContext;
-import javax.naming.NamingException;
 import javax.slee.ActivityContextInterface;
+import javax.slee.Address;
 import javax.slee.RolledBackContext;
 import javax.slee.SbbContext;
-import javax.slee.serviceactivity.ServiceActivity;
-import javax.slee.serviceactivity.ServiceActivityFactory;
-import javax.slee.serviceactivity.ServiceStartedEvent;
+
+import org.telcomp.events.EndReconfigurationEvent;
+import org.telcomp.events.StartReconfigurationEvent;
 
 import servicecategory.Input;
 import servicecategory.Operation;
@@ -28,8 +26,7 @@ import datamodel.Place;
 import datamodel.Token;
 
 public abstract class ReconfigurationSbb implements javax.slee.Sbb {
-	
-	private ServiceActivityFactory saf;
+
 	private Datastore petriNets;
 	private Datastore operationsRep;
 	private String serviceName;
@@ -37,134 +34,127 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private Place reconfigInputPlace;
 	private Place reconfigOutputPlace;
 	private PetriNet retrievedPN;
-	private HashMap<String, String> reconfigurationInputs;
-
-	public void onServiceStartedEvent (ServiceStartedEvent  event, ActivityContextInterface aci) {
-		ServiceActivity sa = saf.getActivity();
-		if(sa.equals(aci.getActivity())){
+	private HashMap<String, Object> reconfigurationInputs;
+	
+	public void onStartReconfigurationEvent(StartReconfigurationEvent event, ActivityContextInterface aci){
+		long l = System.currentTimeMillis();
+		
+		//Setting global Reconfiguration parameters
+		reconfigurationInputs = event.getReconfigInputs();
+		serviceName = (String) reconfigurationInputs.get("ServiceName");
+		ArrayList<Place> IOPlaces = new ArrayList<Place>();
+		Operation reconfigOperation;
+		List<Operation> candidateOperations = new ArrayList<Operation>();
+		
+		//Retrieving Corresponding Petri Net from MongoDB
+		try {
+			Mongo mongo = new Mongo("localhost");
+			petriNets = new Morphia().createDatastore(mongo, "PetriNetsManager");
+			retrievedPN = petriNets.get(PetriNet.class, reconfigurationInputs.get("ServiceName"));
+			System.out.println("Retreived Petri Net Name: "+retrievedPN.getName());
 			
-			long l = System.currentTimeMillis();
-			aci.detach(this.sbbContext.getSbbLocalObject());
-			
-			//Simulating Input obtained from Monitoring Service
-			HashMap<String, String> reconfigInputs = new HashMap<String, String>();
-			reconfigInputs.put("ServiceName", "LinkedInJobNotificator");
-			reconfigInputs.put("operationName", "sendTwitterMessage");
-			//reconfigInputs.put("operationName", "getLinkedInJobs");
-			reconfigInputs.put("mainControlFlow", "4");
-			reconfigInputs.put("branchControlFlow1", "2");
-			reconfigInputs.put("branchControlFlow2", "2");
-			
-			//Setting global Reconfiguration parameters
-			reconfigurationInputs = reconfigInputs;
-			serviceName = reconfigurationInputs.get("ServiceName");
-			ArrayList<Place> IOPlaces = new ArrayList<Place>();
-			Operation reconfigOperation;
-			List<Operation> candidateOperations = new ArrayList<Operation>();
-			
-			//Retrieving Corresponding Petri Net from MongoDB
-			try {
-				Mongo mongo = new Mongo("localhost");
-				petriNets = new Morphia().createDatastore(mongo, "PetriNetsManager");
-				retrievedPN = petriNets.get(PetriNet.class, reconfigurationInputs.get("ServiceName"));
-				System.out.println("Retreived Petri Net Name: "+retrievedPN.getName());
-				
-				//Getting places from the service to be reconfigured
-				for (Place p : retrievedPN.getPlaces()){
-					if(p.getMainControlFlow() == Integer.parseInt(reconfigurationInputs.get("mainControlFlow"))){
-						if(p.getBranchId() == 0){
+			//Getting places from the service to be reconfigured
+			for (Place p : retrievedPN.getPlaces()){
+				if(p.getMainControlFlow() == Integer.parseInt((String) reconfigurationInputs.get("mainControlFlow"))){
+					if(p.getBranchId() == 0){
+						IOPlaces.add(p);
+					} else{
+						if(compareBranchId(p)){
 							IOPlaces.add(p);
-						} else{
-							if(compareBranchId(p)){
-								IOPlaces.add(p);
-							}
 						}
 					}
 				}
-				
-				System.out.println("*****************RETRIEVED PLACES**********************");
-				for(Place p : IOPlaces){
-					System.out.println("Retrieved Place Name: "+ p.getIdentifier());
-					for(Token t : p.getTokens()){
-						System.out.println("Parameter Type: "+t.getType()+" coming from: "+t.getSource()+" going to: "+t.getDestiny());
-					}
-				}
-				System.out.println("*****************RETRIEVED PLACES**********************");
-				
-				//Storing I/O Places from service to be reconfigured individually
-				if(IOPlaces.get(0).getIdentifier().indexOf("InputPlace") >= 0){
-					reconfigInputPlace = IOPlaces.get(0);
-					reconfigOutputPlace = IOPlaces.get(1);
-				} else{
-					reconfigOutputPlace = IOPlaces.get(0);
-					reconfigInputPlace = IOPlaces.get(1);
-				}
-				
-				//Retrieving Operation object from MongoDB Operations Repository
-				operationsRep = new Morphia().createDatastore(mongo, "OperationsManager");
-				operationName = IOPlaces.get(0).getName().substring(0, IOPlaces.get(0).getName().length() - 1);
-				reconfigOperation = operationsRep.find(Operation.class).field("operationName").equal(operationName).get();
-				System.out.println(" ");
-				System.out.println(" ");
-				System.out.println("Operation to reconfigure retrieved from repository: "+reconfigOperation.getOperationName());
-				
-				//Retrieving candidate operations to replace reconfigurated service from Repository
-				candidateOperations = operationsRep.find(Operation.class).field("category").equal(reconfigOperation.getCategory()).asList();
-				for(Operation op : candidateOperations){
-					//Discarding reconfigurated Operation as a candidate
-					if(op.getId() != reconfigOperation.getId() && !(op.getOperationName().indexOf("Telco") >= 0)){
-						System.out.println("Candidate Operation retrieved for Repository: "+op.getOperationName());
-						//Outputs Analysis
-						Place candidateOutPl = new Place();
-						candidateOutPl = outputAnalysis(reconfigOperation, op, candidateOutPl);
-						if(candidateOutPl != null){
-							//Inputs Analysis
-							Place candidateInPl = new Place();
-							candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
-							if(candidateInPl != null){
-								System.out.println("******************RESULT*******************");
-								System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
-								System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
-								System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
-								System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
-								System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
-								for(Token t: candidateOutPl.getTokens()){
-									System.out.println("Token Id: "+t.getIdentifier());
-									System.out.println("Token Source: "+t.getSource());
-									System.out.println("Token Destiny: "+t.getDestiny());
-								}
-								System.out.println(" ");
-								System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
-								System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
-								System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
-								System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
-								System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
-								for(Token t: candidateInPl.getTokens()){
-									System.out.println("Token Id: "+t.getIdentifier());
-									System.out.println("Token Source: "+t.getSource());
-									System.out.println("Token Destiny: "+t.getDestiny());
-								}
-								break;
-							} 
-							System.out.println("Inputs not satisfied");
-						}
-						System.out.println("Outputs not satisfied");
-		                System.out.println(" ");
-					}
-				}
-				System.out.println("******************RESULT*******************");
-	            System.out.println(" ");
-				mongo.close();
-				System.out.println("Algorithm used time: " + (System.currentTimeMillis() - l) + "ms");
-			} catch (Exception e) {
-				e.printStackTrace();
 			}
+			
+			System.out.println("*****************RETRIEVED PLACES**********************");
+			for(Place p : IOPlaces){
+				System.out.println("Retrieved Place Name: "+ p.getIdentifier());
+				for(Token t : p.getTokens()){
+					System.out.println("Parameter Type: "+t.getType()+" coming from: "+t.getSource()+" going to: "+t.getDestiny());
+				}
+			}
+			System.out.println("*****************RETRIEVED PLACES**********************");
+			
+			//Storing I/O Places from service to be reconfigured individually
+			if(IOPlaces.get(0).getIdentifier().indexOf("InputPlace") >= 0){
+				reconfigInputPlace = IOPlaces.get(0);
+				reconfigOutputPlace = IOPlaces.get(1);
+			} else{
+				reconfigOutputPlace = IOPlaces.get(0);
+				reconfigInputPlace = IOPlaces.get(1);
+			}
+			
+			//Retrieving Operation object from MongoDB Operations Repository
+			operationsRep = new Morphia().createDatastore(mongo, "OperationsManager");
+			operationName = IOPlaces.get(0).getName().substring(0, IOPlaces.get(0).getName().length() - 1);
+			reconfigOperation = operationsRep.find(Operation.class).field("operationName").equal(operationName).get();
+			System.out.println(" ");
+			System.out.println(" ");
+			System.out.println("Operation to reconfigure retrieved from repository: "+reconfigOperation.getOperationName());
+			
+			//Retrieving candidate operations to replace reconfigurated service from Repository
+			candidateOperations = operationsRep.find(Operation.class).field("category").equal(reconfigOperation.getCategory()).asList();
+			for(Operation op : candidateOperations){
+				//Discarding reconfigurated Operation as a candidate
+				if(op.getId() != reconfigOperation.getId() && !(op.getOperationName().indexOf("Telco") >= 0)){
+					System.out.println("Candidate Operation retrieved for Repository: "+op.getOperationName());
+					//Outputs Analysis
+					Place candidateOutPl = new Place();
+					candidateOutPl = outputAnalysis(reconfigOperation, op, candidateOutPl);
+					if(candidateOutPl != null){
+						//Inputs Analysis
+						Place candidateInPl = new Place();
+						candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
+						if(candidateInPl != null){
+							System.out.println("******************RESULT*******************");
+							System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
+							System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
+							System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
+							System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
+							System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
+							for(Token t: candidateOutPl.getTokens()){
+								System.out.println("Token Id: "+t.getIdentifier());
+								System.out.println("Token Source: "+t.getSource());
+								System.out.println("Token Destiny: "+t.getDestiny());
+							}
+							System.out.println(" ");
+							System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
+							System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
+							System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
+							System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
+							System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
+							for(Token t: candidateInPl.getTokens()){
+								System.out.println("Token Id: "+t.getIdentifier());
+								System.out.println("Token Source: "+t.getSource());
+								System.out.println("Token Destiny: "+t.getDestiny());
+							}
+							EndReconfigurationEvent endEvent = new EndReconfigurationEvent(true);
+							this.fireEndReconfigurationEvent(endEvent, aci, null);
+							break;
+						} 
+						System.out.println("Inputs not satisfied");
+						EndReconfigurationEvent endEvent = new EndReconfigurationEvent(false);
+						this.fireEndReconfigurationEvent(endEvent, aci, null);
+					}
+					System.out.println("Outputs not satisfied");
+	                System.out.println(" ");
+	                EndReconfigurationEvent endEvent = new EndReconfigurationEvent(false);
+					this.fireEndReconfigurationEvent(endEvent, aci, null);
+				}
+			}
+			System.out.println("******************RESULT*******************");
+            System.out.println(" ");
+			mongo.close();
+			System.out.println("Algorithm used time: " + (System.currentTimeMillis() - l) + "ms");
+			aci.detach(this.sbbContext.getSbbLocalObject());
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
 	}
 	
 	private boolean compareBranchId(Place p){
-		if(Integer.parseInt(reconfigurationInputs.get("branchControlFlow"+Integer.toString(p.getBranchId()))) == p.getBranchControlFlow() 
-				&& p.getName().indexOf(reconfigurationInputs.get("operationName")) >= 0){
+		if(Integer.parseInt((String) reconfigurationInputs.get("branchControlFlow"+Integer.toString(p.getBranchId()))) == p.getBranchControlFlow() 
+				&& p.getName().indexOf((String) reconfigurationInputs.get("operationName")) >= 0){
 			return true;
 		} else{
 			return false;
@@ -381,15 +371,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	}
 	
 	// TODO: Perform further operations if required in these methods.
-	public void setSbbContext(SbbContext context) { 
-		this.sbbContext = context;
-		try {
-			Context ctx = (Context) new InitialContext().lookup("java:comp/env");
-			saf = (ServiceActivityFactory) ctx.lookup("slee/serviceactivity/factory"); 
-		} catch (NamingException e) {
-			e.printStackTrace();
-		}
-	}
+	public void setSbbContext(SbbContext context) {this.sbbContext = context;}
     public void unsetSbbContext() { this.sbbContext = null; }
     
     // TODO: Implement the lifecycle methods if required
@@ -402,6 +384,8 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
     public void sbbStore() {}
     public void sbbExceptionThrown(Exception exception, Object event, ActivityContextInterface activity) {}
     public void sbbRolledBack(RolledBackContext context) {}
+    
+    public abstract void fireEndReconfigurationEvent (EndReconfigurationEvent event, ActivityContextInterface aci, Address address);
 	
 
 	
