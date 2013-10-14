@@ -3,5 +3,7 @@
                                  "http://java.sun.com/dtd/slee-deployable-unit_1_1.dtd">
 <deployable-unit>
     <jar>jars/Reconfiguration-sbb.jar</jar>
+    <jar>jars/StartReconfiguration-event.jar</jar>
+    <jar>jars/EndReconfiguration-event.jar</jar>
     <service-xml>src/org/telcomp/service/reconfiguration-service.xml</service-xml>
 </deployable-unit>

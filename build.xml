@@ -33,51 +33,16 @@
         </path>
     </target>
     <target depends="init" name="all">
-        <ant target="build-Reconfiguration-sbb"/>
-        <ant target="build-reconfiguration-DU"/>
         <ant target="build-StartReconfiguration-event"/>
         <ant target="build-EndReconfiguration-event"/>
+        <ant target="build-Reconfiguration-sbb"/>
+        <ant target="build-reconfiguration-DU"/>
     </target>
     <target depends="init" name="clean">
-        <ant target="clean-Reconfiguration-sbb"/>
-        <ant target="clean-reconfiguration-DU"/>
         <ant target="clean-StartReconfiguration-event"/>
         <ant target="clean-EndReconfiguration-event"/>
-    </target>
-    <target depends="init" name="build-Reconfiguration-sbb">
-        <mkdir dir="classes/Reconfiguration-sbb"/>
-        <mkdir dir="jars/"/>
-        <javac destdir="classes/Reconfiguration-sbb"
-            includes="org/telcomp/sbb/ReconfigurationSbb.java" srcdir="src">
-            <classpath>
-                <path refid="path-Reconfiguration-sbb"/>
-                <path refid="ExternalComponents"/>
-                <path refid="slee"/>
-            </classpath>
-        </javac>
-        <copy file="src/org/telcomp/sbb/Reconfiguration-sbb-jar.xml" tofile="classes/Reconfiguration-sbb/sbb-jar.xml"/>
-        <jar basedir="classes/Reconfiguration-sbb"
-            destfile="jars/Reconfiguration-sbb.jar" includes="**/*.class">
-            <metainf dir="classes/Reconfiguration-sbb" includes="sbb-jar.xml"/>
-        </jar>
-    </target>
-    <target name="clean-Reconfiguration-sbb">
-        <delete file="jars/Reconfiguration-sbb.jar"/>
-        <delete dir="classes/Reconfiguration-sbb"/>
-    </target>
-    <target depends="build-Reconfiguration-sbb" name="build-reconfiguration-DU">
-        <mkdir dir="classes/reconfiguration-DU"/>
-        <copy
-            file="src/org/telcomp/service/reconfiguration-deployable-unit.xml" tofile="classes/reconfiguration-DU/deployable-unit.xml"/>
-        <jar jarfile="jars/reconfiguration-DU.jar">
-            <metainf dir="classes/reconfiguration-DU" includes="deployable-unit.xml"/>
-            <fileset dir="" includes="jars/Reconfiguration-sbb.jar"/>
-            <fileset dir="." includes="src/org/telcomp/service/reconfiguration-service.xml"/>
-        </jar>
-    </target>
-    <target name="clean-reconfiguration-DU">
-        <delete file="jars/reconfiguration-DU.jar"/>
-        <delete dir="classes/reconfiguration-DU"/>
+        <ant target="clean-Reconfiguration-sbb"/>
+        <ant target="clean-reconfiguration-DU"/>
     </target>
     <target depends="init" name="build-StartReconfiguration-event">
         <mkdir dir="classes/StartReconfiguration-event"/>
@@ -112,5 +77,42 @@
     <target name="clean-EndReconfiguration-event">
         <delete file="jars/EndReconfiguration-event.jar"/>
         <delete dir="classes/EndReconfiguration-event"/>
+    </target>
+    <target depends="init" name="build-Reconfiguration-sbb">
+        <mkdir dir="classes/Reconfiguration-sbb"/>
+        <mkdir dir="jars/"/>
+        <javac destdir="classes/Reconfiguration-sbb"
+            includes="org/telcomp/sbb/ReconfigurationSbb.java" srcdir="src">
+            <classpath>
+                <path refid="path-Reconfiguration-sbb"/>
+                <path refid="ExternalComponents"/>
+                <path refid="slee"/>
+            </classpath>
+        </javac>
+        <copy file="src/org/telcomp/sbb/Reconfiguration-sbb-jar.xml" tofile="classes/Reconfiguration-sbb/sbb-jar.xml"/>
+        <jar basedir="classes/Reconfiguration-sbb"
+            destfile="jars/Reconfiguration-sbb.jar" includes="**/*.class">
+            <metainf dir="classes/Reconfiguration-sbb" includes="sbb-jar.xml"/>
+        </jar>
+    </target>
+    <target name="clean-Reconfiguration-sbb">
+        <delete file="jars/Reconfiguration-sbb.jar"/>
+        <delete dir="classes/Reconfiguration-sbb"/>
+    </target>
+    <target depends="build-Reconfiguration-sbb" name="build-reconfiguration-DU">
+        <mkdir dir="classes/reconfiguration-DU"/>
+        <copy
+            file="src/org/telcomp/service/reconfiguration-deployable-unit.xml" tofile="classes/reconfiguration-DU/deployable-unit.xml"/>
+        <jar jarfile="jars/reconfiguration-DU.jar">
+            <metainf dir="classes/reconfiguration-DU" includes="deployable-unit.xml"/>
+            <fileset dir="" includes="jars/StartReconfiguration-event.jar"/>
+            <fileset dir="" includes="jars/EndReconfiguration-event.jar"/>
+            <fileset dir="" includes="jars/Reconfiguration-sbb.jar"/>
+            <fileset dir="." includes="src/org/telcomp/service/reconfiguration-service.xml"/>
+        </jar>
+    </target>
+    <target name="clean-reconfiguration-DU">
+        <delete file="jars/reconfiguration-DU.jar"/>
+        <delete dir="classes/reconfiguration-DU"/>
     </target>
 </project>
