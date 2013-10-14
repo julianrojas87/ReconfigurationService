@@ -41,7 +41,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		
 		//Setting global Reconfiguration parameters
 		reconfigurationInputs = event.getReconfigInputs();
-		serviceName = (String) reconfigurationInputs.get("ServiceName");
+		serviceName = (String) reconfigurationInputs.get("serviceName");
 		ArrayList<Place> IOPlaces = new ArrayList<Place>();
 		Operation reconfigOperation;
 		List<Operation> candidateOperations = new ArrayList<Operation>();
@@ -50,7 +50,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		try {
 			Mongo mongo = new Mongo("localhost");
 			petriNets = new Morphia().createDatastore(mongo, "PetriNetsManager");
-			retrievedPN = petriNets.get(PetriNet.class, reconfigurationInputs.get("ServiceName"));
+			retrievedPN = petriNets.get(PetriNet.class, reconfigurationInputs.get("serviceName"));
 			System.out.println("Retreived Petri Net Name: "+retrievedPN.getName());
 			
 			//Getting places from the service to be reconfigured
