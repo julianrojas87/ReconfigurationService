@@ -31,6 +31,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private Datastore operationsRep;
 	private String serviceName;
 	private String operationName;
+	//private String userId;
 	private Place reconfigInputPlace;
 	private Place reconfigOutputPlace;
 	private PetriNet retrievedPN;
@@ -39,9 +40,16 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	public void onStartReconfigurationEvent(StartReconfigurationEvent event, ActivityContextInterface aci){
 		long l = System.currentTimeMillis();
 		
+		System.out.println("-------------Reconfiguration Inputs----------");
+		for(Entry<String, Object> entry : event.getReconfigInputs().entrySet()) {
+			System.out.println(entry.getKey() + ": "+entry.getValue());
+		}
+		System.out.println("-------------Reconfiguration Inputs----------");
+		
 		//Setting global Reconfiguration parameters
 		reconfigurationInputs = event.getReconfigInputs();
 		serviceName = (String) reconfigurationInputs.get("serviceName");
+		//userId = (String) reconfigurationInputs.get("userid");
 		ArrayList<Place> IOPlaces = new ArrayList<Place>();
 		Operation reconfigOperation;
 		List<Operation> candidateOperations = new ArrayList<Operation>();
