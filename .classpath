@@ -11,5 +11,6 @@
 	<classpathentry kind="lib" path="lib/morphia-0.99.jar"/>
 	<classpathentry kind="lib" path="lib/PetriNets.jar"/>
 	<classpathentry kind="lib" path="lib/OperationsRepository.jar"/>
+	<classpathentry kind="lib" path="lib/ContextInfo.jar"/>
 	<classpathentry kind="output" path="classes"/>
 </classpath>

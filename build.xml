@@ -27,6 +27,7 @@
             <pathelement location="lib/morphia-0.99.jar"/>
             <pathelement location="lib/PetriNets.jar"/>
             <pathelement location="lib/OperationsRepository.jar"/>
+            <pathelement location="lib/ContextInfo.jar"/>
         </path>
         <path id="path-Reconfiguration-sbb">
             <pathelement location="/home/julian/Telcomp-Workspace/ReconfigurationService/lib/DU/standard-components-du.jar/jars/standard-events11-jar-2.7.0.FINAL.jar"/>

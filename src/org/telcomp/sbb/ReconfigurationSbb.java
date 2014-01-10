@@ -21,6 +21,8 @@ import com.google.code.morphia.Datastore;
 import com.google.code.morphia.Morphia;
 import com.mongodb.Mongo;
 
+import contextinfo.User;
+
 import datamodel.PetriNet;
 import datamodel.Place;
 import datamodel.Token;
@@ -31,7 +33,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private Datastore operationsRep;
 	private String serviceName;
 	private String operationName;
-	//private String userId;
+	private String userId;
 	private Place reconfigInputPlace;
 	private Place reconfigOutputPlace;
 	private PetriNet retrievedPN;
@@ -49,7 +51,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		//Setting global Reconfiguration parameters
 		reconfigurationInputs = event.getReconfigInputs();
 		serviceName = (String) reconfigurationInputs.get("serviceName");
-		//userId = (String) reconfigurationInputs.get("userid");
+		userId = (String) reconfigurationInputs.get("userid");
 		ArrayList<Place> IOPlaces = new ArrayList<Place>();
 		Operation reconfigOperation;
 		List<Operation> candidateOperations = new ArrayList<Operation>();
@@ -102,56 +104,95 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			
 			//Retrieving candidate operations to replace reconfigurated service from Repository
 			candidateOperations = operationsRep.find(Operation.class).field("category").equal(reconfigOperation.getCategory()).asList();
+			boolean reconfigurationCheck = false;
 			for(Operation op : candidateOperations){
 				//Discarding reconfigurated Operation as a candidate
 				if(op.getId() != reconfigOperation.getId() && !(op.getOperationName().indexOf("Telco") >= 0)){
 					System.out.println("Candidate Operation retrieved for Repository: "+op.getOperationName());
-					//Outputs Analysis
-					Place candidateOutPl = new Place();
-					candidateOutPl = outputAnalysis(reconfigOperation, op, candidateOutPl);
-					if(candidateOutPl != null){
-						//Inputs Analysis
-						Place candidateInPl = new Place();
-						candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
-						if(candidateInPl != null){
-							System.out.println("******************RESULT*******************");
-							System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
-							System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
-							System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
-							System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
-							System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
-							for(Token t: candidateOutPl.getTokens()){
-								System.out.println("Token Id: "+t.getIdentifier());
-								System.out.println("Token Source: "+t.getSource());
-								System.out.println("Token Destiny: "+t.getDestiny());
+					//Context analysis
+					Datastore users = new Morphia().createDatastore(mongo, "ContextManager");
+					boolean contextCheck = false;
+					if(reconfigOperation.getCategory().equals("messaging")){
+						//Presence checking
+						String contextUser = null;
+						for(Entry<String, Object> entry : reconfigurationInputs.entrySet()) {
+							String value = (String) entry.getValue();
+							if(value.indexOf(reconfigInputPlace.getName()) >= 0){
+								contextUser = value.substring(value.indexOf("-") + 1);
 							}
-							System.out.println(" ");
-							System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
-							System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
-							System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
-							System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
-							System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
-							for(Token t: candidateInPl.getTokens()){
-								System.out.println("Token Id: "+t.getIdentifier());
-								System.out.println("Token Source: "+t.getSource());
-								System.out.println("Token Destiny: "+t.getDestiny());
-							}
-							EndReconfigurationEvent endEvent = new EndReconfigurationEvent(true);
-							this.fireEndReconfigurationEvent(endEvent, aci, null);
-							break;
-						} 
-						System.out.println("Inputs not satisfied");
-						EndReconfigurationEvent endEvent = new EndReconfigurationEvent(false);
-						this.fireEndReconfigurationEvent(endEvent, aci, null);
+						}
+						User u = users.get(User.class, contextUser);
+						System.out.println("User retreived: " + u.getId() + " Presence: " + u.getPresence());
+						if(checkPresence(op, u)){
+							contextCheck = true;
+						}
+					} else{
+						//Location checking
+						User u = users.get(User.class, userId);
+						System.out.println("User retreived: " + u.getId() + " Location: " + u.getLocation());
+						if(checkLocation(op, u)){
+							contextCheck = true;
+						}
 					}
-					System.out.println("Outputs not satisfied");
-	                System.out.println(" ");
-	                EndReconfigurationEvent endEvent = new EndReconfigurationEvent(false);
-					this.fireEndReconfigurationEvent(endEvent, aci, null);
+					System.out.println("Context analysis result: "+contextCheck);
+					
+					if(contextCheck){
+						//Outputs Analysis
+						Place candidateOutPl = new Place();
+						candidateOutPl = outputAnalysis(reconfigOperation, op, candidateOutPl);
+						if(candidateOutPl != null){
+							//Inputs Analysis
+							Place candidateInPl = new Place();
+							candidateInPl = inputAnalysis(op, retrievedPN.getPlaces(), candidateInPl);
+							if(candidateInPl != null){
+								System.out.println("******************RESULT*******************");
+								System.out.println("Candidate Output Place Id: "+candidateOutPl.getIdentifier());
+								System.out.println("Candidate Output Place Name: "+candidateOutPl.getName());
+								System.out.println("Candidate Output Place MainControlFlow: "+candidateOutPl.getMainControlFlow());
+								System.out.println("Candidate Output Place BranchId: "+candidateOutPl.getBranchId());
+								System.out.println("Candidate Output Place BranchControlFlow: "+candidateOutPl.getBranchControlFlow());
+								for(Token t: candidateOutPl.getTokens()){
+									System.out.println("Token Id: "+t.getIdentifier());
+									System.out.println("Token Source: "+t.getSource());
+									System.out.println("Token Destiny: "+t.getDestiny());
+								}
+								System.out.println(" ");
+								System.out.println("Candidate Input Place Id: "+candidateInPl.getIdentifier());
+								System.out.println("Candidate Input Place Name: "+candidateInPl.getName());
+								System.out.println("Candidate Input Place MainControlFlow: "+candidateInPl.getMainControlFlow());
+								System.out.println("Candidate Input Place BranchId: "+candidateInPl.getBranchId());
+								System.out.println("Candidate Input Place BranchControlFlow: "+candidateInPl.getBranchControlFlow());
+								for(Token t: candidateInPl.getTokens()){
+									System.out.println("Token Id: "+t.getIdentifier());
+									System.out.println("Token Source: "+t.getSource());
+									System.out.println("Token Destiny: "+t.getDestiny());
+								}
+								System.out.println("******************RESULT*******************");
+					            System.out.println(" ");
+								EndReconfigurationEvent endEvent = new EndReconfigurationEvent(true);
+								this.fireEndReconfigurationEvent(endEvent, aci, null);
+								reconfigurationCheck = true;
+								break;
+							} else{
+								System.out.println("Inputs not satisfied");
+								System.out.println(" ");
+							}
+						} else{
+							System.out.println("Outputs not satisfied");
+			                System.out.println(" ");
+						}
+					} else{
+						System.out.println("Context conditions were not satisfied");
+						System.out.println(" ");
+					}
 				}
 			}
-			System.out.println("******************RESULT*******************");
-            System.out.println(" ");
+			
+			if(!reconfigurationCheck){
+				//Reconfiguration failed
+				EndReconfigurationEvent endEvent = new EndReconfigurationEvent(false);
+				this.fireEndReconfigurationEvent(endEvent, aci, null);
+			}
 			mongo.close();
 			System.out.println("Algorithm used time: " + (System.currentTimeMillis() - l) + "ms");
 			aci.detach(this.sbbContext.getSbbLocalObject());
@@ -163,6 +204,22 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private boolean compareBranchId(Place p){
 		if(Integer.parseInt((String) reconfigurationInputs.get("branchControlFlow"+Integer.toString(p.getBranchId()))) == p.getBranchControlFlow() 
 				&& p.getName().indexOf((String) reconfigurationInputs.get("operationName")) >= 0){
+			return true;
+		} else{
+			return false;
+		}
+	}
+	
+	private boolean checkPresence(Operation op, User u){
+		if(op.getPresenceInfo().equals(u.getPresence()) || op.getPresenceInfo().equals("any")){
+			return true;
+		} else {
+			return false;
+		}
+	}
+	
+	private boolean checkLocation(Operation op, User u){
+		if(op.getLocationInfo().equals(u.getLocation()) || op.getLocationInfo().equals("any")){
 			return true;
 		} else{
 			return false;
