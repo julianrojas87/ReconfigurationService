@@ -23,9 +23,11 @@ import com.mongodb.Mongo;
 
 import contextinfo.User;
 
+import datamodel.Arc;
 import datamodel.PetriNet;
 import datamodel.Place;
 import datamodel.Token;
+import datamodel.Transition;
 
 public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 
@@ -47,6 +49,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			System.out.println(entry.getKey() + ": "+entry.getValue());
 		}
 		System.out.println("-------------Reconfiguration Inputs----------");
+		System.out.println(" ");
 		
 		//Setting global Reconfiguration parameters
 		reconfigurationInputs = event.getReconfigInputs();
@@ -169,6 +172,9 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 								}
 								System.out.println("******************RESULT*******************");
 					            System.out.println(" ");
+					            //Update Petri Net and save it into DB
+					            updatePetriNet(candidateInPl, candidateOutPl);
+					            //Update Petri Net and modify Converged Service SBB class!!!!!!!
 								EndReconfigurationEvent endEvent = new EndReconfigurationEvent(true);
 								this.fireEndReconfigurationEvent(endEvent, aci, null);
 								reconfigurationCheck = true;
@@ -433,6 +439,78 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			}
 		}
 		return flag;
+	}
+	
+	private void updatePetriNet(Place candidateInPl, Place candidateOutPl){
+		petriNets.save(candidateInPl);
+		petriNets.save(candidateOutPl);
+		//Replacing Places from new service in Converged Service Petri Net
+		replacePlace(candidateInPl, reconfigInputPlace.getIdentifier());
+		replacePlace(candidateOutPl, reconfigOutputPlace.getIdentifier());
+		//Adding new service transition
+		Transition t = replaceTransition(candidateInPl.getName());
+		//Update related Arcs
+		updateArcs(candidateInPl, t, candidateOutPl, reconfigInputPlace.getName(), candidateInPl.getName());
+		//Save updated Petri Net into DB
+		petriNets.save(retrievedPN);
+	}
+	
+	private void replacePlace(Place p, String reconfigPlaceId){
+		for(int i=0; i<retrievedPN.getPlaces().size(); i++){
+			if(retrievedPN.getPlaces().get(i).getIdentifier().equals(reconfigPlaceId)){
+				petriNets.delete(retrievedPN.getPlaces().get(i));
+				retrievedPN.getPlaces().remove(i);
+				retrievedPN.getPlaces().add(i, p);
+			}
+		}
+	}
+	
+	private Transition replaceTransition(String opName){
+		Transition t = new Transition(retrievedPN.getName() + "_" + opName + "_Transition", opName);
+		petriNets.save(t);
+		for(int i=0; i<retrievedPN.getTransitions().size(); i++){
+			if(retrievedPN.getTransitions().get(i).getName().equals(reconfigInputPlace.getName())){
+				petriNets.delete(retrievedPN.getTransitions().get(i));
+				retrievedPN.getTransitions().remove(i);
+				retrievedPN.getTransitions().add(i, t);
+			}
+		}
+		return t;
+	}
+	
+	private void updateArcs(Place inPlace, Transition t, Place outPlace, String reconfigName, String opName){
+		for(int i=0; i<retrievedPN.getArcs().size(); i++){
+			if(retrievedPN.getArcs().get(i).getOutputPlace() != null && retrievedPN.getArcs().get(i).getInputTransition() != null &&
+					retrievedPN.getArcs().get(i).getOutputPlace().getName().equals(reconfigName) && 
+					retrievedPN.getArcs().get(i).getInputTransition().getName().indexOf(reconfigName) < 0){
+				retrievedPN.getArcs().get(i).setOutputPlace(inPlace);
+				petriNets.save(retrievedPN.getArcs().get(i));
+			}
+			if(retrievedPN.getArcs().get(i).getInputPlace() != null && retrievedPN.getArcs().get(i).getOutputTransition() != null &&
+					retrievedPN.getArcs().get(i).getInputPlace().getName().equals(reconfigName) && 
+					retrievedPN.getArcs().get(i).getOutputTransition().getName().equals(reconfigName)){
+				Arc a = new Arc(retrievedPN.getName() + "_" + opName + "_InputArc", opName, inPlace, t);
+				petriNets.delete(retrievedPN.getArcs().get(i));
+				retrievedPN.getArcs().remove(i);
+				retrievedPN.getArcs().add(i, a);
+				petriNets.save(a);
+			}
+			if(retrievedPN.getArcs().get(i).getOutputPlace() != null && retrievedPN.getArcs().get(i).getInputTransition() != null &&
+					retrievedPN.getArcs().get(i).getOutputPlace().getName().equals(reconfigName) && 
+					retrievedPN.getArcs().get(i).getInputTransition().getName().equals(reconfigName)){
+				Arc a = new Arc(retrievedPN.getName() + "_" + opName + "_OutputArc", opName, t, outPlace);
+				petriNets.delete(retrievedPN.getArcs().get(i));
+				retrievedPN.getArcs().remove(i);
+				retrievedPN.getArcs().add(i, a);
+				petriNets.save(a);
+			}
+			if(retrievedPN.getArcs().get(i).getInputPlace() != null && retrievedPN.getArcs().get(i).getOutputTransition() != null &&
+					retrievedPN.getArcs().get(i).getInputPlace().getName().equals(reconfigName) 
+					&& retrievedPN.getArcs().get(i).getOutputTransition().getName().indexOf(reconfigName) < 0){
+				retrievedPN.getArcs().get(i).setInputPlace(outPlace);
+				petriNets.save(retrievedPN.getArcs().get(i));
+			}
+		}
 	}
 	
 	// TODO: Perform further operations if required in these methods.
