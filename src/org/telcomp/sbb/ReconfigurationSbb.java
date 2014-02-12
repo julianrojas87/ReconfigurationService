@@ -1,9 +1,17 @@
 package org.telcomp.sbb;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
+
+import javassist.ClassPool;
 
 import javax.slee.ActivityContextInterface;
 import javax.slee.Address;
@@ -41,6 +49,14 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private PetriNet retrievedPN;
 	private HashMap<String, Object> reconfigurationInputs;
 	
+	private final String deployPath = "/usr/local/Mobicents-JSLEE/jboss-5.1.0.GA/server/default/deploy/";
+	private final String tempDirPath = "/usr/local/Mobicents-JSLEE/temp/";
+	private final String neededJarsPath = "/usr/local/Mobicents-JSLEE/neededJars/";
+	private final String duJarCmpt = "-DU.jar";
+	private final String sbbJarCmpt = "CS-sbb.jar";
+	private final String sbbClassCmpt = "CSSbb";
+	private final String sbbPath = "org.telcomp.sbb.";
+	
 	public void onStartReconfigurationEvent(StartReconfigurationEvent event, ActivityContextInterface aci){
 		long l = System.currentTimeMillis();
 		
@@ -53,6 +69,17 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		
 		//Setting global Reconfiguration parameters
 		reconfigurationInputs = event.getReconfigInputs();
+		
+		//****************************Test parameters***********************************
+		reconfigurationInputs.put("operationName", "MediaCallTelcoService");
+		reconfigurationInputs.put("contextInfo0", "sendTwitterMessage0-1061698729");
+		reconfigurationInputs.put("contextInfo1", "SendEmailTelcoService0-1061698728");
+		reconfigurationInputs.put("contextInfo2", "MediaCallTelcoService0-1061698729");
+		reconfigurationInputs.put("branchControlFlow2", "0");
+		reconfigurationInputs.put("branchControlFlow1", "0");
+		reconfigurationInputs.put("mainControlFlow", "7");
+		//****************************Test parameters***********************************
+		
 		serviceName = (String) reconfigurationInputs.get("serviceName");
 		userId = (String) reconfigurationInputs.get("userid");
 		ArrayList<Place> IOPlaces = new ArrayList<Place>();
@@ -111,6 +138,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			for(Operation op : candidateOperations){
 				//Discarding reconfigurated Operation as a candidate
 				if(op.getId() != reconfigOperation.getId() && !(op.getOperationName().indexOf("Telco") >= 0)){
+				//if(op.getId() != reconfigOperation.getId()){
 					System.out.println("Candidate Operation retrieved for Repository: "+op.getOperationName());
 					//Context analysis
 					Datastore users = new Morphia().createDatastore(mongo, "ContextManager");
@@ -174,7 +202,9 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 					            System.out.println(" ");
 					            //Update Petri Net and save it into DB
 					            updatePetriNet(candidateInPl, candidateOutPl);
-					            //Update Petri Net and modify Converged Service SBB class!!!!!!!
+					            //Modify Converged Service SBB class
+					            updateConvergedService(candidateInPl);
+					            //Finish Reconfiguration process
 								EndReconfigurationEvent endEvent = new EndReconfigurationEvent(true);
 								this.fireEndReconfigurationEvent(endEvent, aci, null);
 								reconfigurationCheck = true;
@@ -271,23 +301,52 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		for(Input cin : candidateOp.getInputs()){
 			inputsCheck.put(cin.getInputName(), "false");
 		}
-		
+		//Checking that Reconfigurated Operation has one or more Inputs
 		if(inputsCheck.size() > 0){
 			for(Place p : places){
+				//Finding Outputs that match Candidate Operation Inputs and belong to previous Operations
 				if((p.getMainControlFlow() < reconfigInputPlace.getMainControlFlow() || 
-						(p.getBranchId() != 0 && p.getBranchId() == reconfigInputPlace.getBranchId())) && 
+						(p.getBranchId() != 0 && p.getBranchId() == reconfigInputPlace.getBranchId() && 
+						p.getBranchControlFlow() < reconfigInputPlace.getBranchControlFlow())) && 
 						(p.getIdentifier().indexOf("OutputPlace") >= 0 || p.getIdentifier().indexOf("StartPlace") >= 0) && 
 						!p.getName().equals(reconfigInputPlace.getName())){
 					for(Token t : p.getTokens()){
 						Input i = getDestinyInput(t.getDestiny(), places);
 						if(i != null){
 							for(Input i0 : candidateOp.getInputs()){
+								//Matching Input Type and Subtype
 								if(i0.getType().equals(i.getType()) && (i0.getSubType().equals(i.getSubType()) 
 										|| i0.getSubType().equals("any"))){
-									Token it = new Token(candidateInPl.getName()+"_InputToken"+candidateInPl.getTokens().size(), 
-											"input", i0.getDataType(), t.getDestiny(), i0.getInputName());
-									candidateInPl.getTokens().add(it);
-									inputsCheck.put(i0.getInputName(), "true");
+									//Verifying that a previous GetData Op could satisfy messaging operation Input based on context user
+									if(candidateOp.getCategory().equals("messaging") && p.getName().indexOf("GetDataTelcoService") >= 0){
+										String destPl = getDestinyPlace(i.getInputName(), places);
+										String reconfUser = null;
+										String optUser = null;
+										
+										for(Entry<String, Object> entry : reconfigurationInputs.entrySet()) {
+											String value = (String) entry.getValue();
+											if(value.indexOf(reconfigInputPlace.getName()) >= 0){
+												reconfUser = value.substring(value.indexOf("-") + 1);
+											}
+										}
+										for(Entry<String, Object> entry : reconfigurationInputs.entrySet()) {
+											String value = (String) entry.getValue();
+											if(value.indexOf(destPl) >= 0){
+												optUser = value.substring(value.indexOf("-") + 1);
+											}
+										}
+										if(reconfUser.equals(optUser)){
+											Token it = new Token(candidateInPl.getName()+"_InputToken"+candidateInPl.getTokens().size(), 
+													"input", i0.getDataType(), t.getDestiny(), i0.getInputName());
+											candidateInPl.getTokens().add(it);
+											inputsCheck.put(i0.getInputName(), "true");
+										}
+									} else{
+										Token it = new Token(candidateInPl.getName()+"_InputToken"+candidateInPl.getTokens().size(), 
+												"input", i0.getDataType(), t.getDestiny(), i0.getInputName());
+										candidateInPl.getTokens().add(it);
+										inputsCheck.put(i0.getInputName(), "true");
+									}
 								}
 							}
 						}
@@ -339,6 +398,21 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			}
 		}
 		return in;
+	}
+	
+	private String getDestinyPlace(String inputName, ArrayList<Place> places){
+		String placeName = null;
+		
+		for(Place p0 : places){
+			if(p0.getIdentifier().indexOf("InputPlace") >= 0){
+				for(Token t0 : p0.getTokens()){
+					if(t0.getDestiny().equals(inputName)){
+						placeName = p0.getName();
+					}
+				}
+			}
+		}
+		return placeName;
 	}
 	
 	private int getOpId(Operation op){
@@ -511,6 +585,142 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 				petriNets.save(retrievedPN.getArcs().get(i));
 			}
 		}
+	}
+	
+	private void updateConvergedService(Place candidateInPl){
+		try{
+			//Unjar the DU of the orchestrator service and save its Sbb jar file in a temp directory
+			String newTempDir = this.getSbbJar(serviceName);
+			ClassPool cp = ClassPool.getDefault();
+			//Inserting required Class definitions to ClassPool to modify orchestrator service Class
+			cp.insertClassPath(newTempDir + serviceName + sbbJarCmpt);
+			//JAIN SLEE library included to avoid compilation errors
+			cp.insertClassPath(deployPath + "mobicents-slee/lib/jain-slee-1.1.jar");
+			//Find out which are the handler methods that invoke the reconfigurated operation and include them in Classpath
+			ArrayList<String> handlerMethods = findHandlerMethods(candidateInPl);
+			for(String s : handlerMethods){
+				System.out.println("Handler Method jar: "+s);
+				cp.insertClassPath(neededJarsPath + s);
+			}
+			
+		} catch (Exception e){
+			e.printStackTrace();
+		}
+		
+	}
+	
+	private String getSbbJar(String serviceName){
+		JarFile jar;
+		int files = new File(tempDirPath).list().length;
+		String newTempDir = null;
+		try {
+			newTempDir = this.createNewTempDir(files);
+			jar = new JarFile(deployPath + this.getDuName(serviceName) + duJarCmpt);
+			JarEntry entry = (JarEntry) jar.getEntry("jars/" + serviceName + sbbJarCmpt);
+			File f = new File(newTempDir + serviceName + sbbJarCmpt);
+			InputStream is = jar.getInputStream(entry);
+			FileOutputStream fos = new FileOutputStream(f);
+	        while (is.available() > 0) {
+	            fos.write(is.read());
+	        }
+	        fos.close();
+	        is.close();
+	        jar.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return newTempDir;
+	}
+	
+	private String createNewTempDir(int files){
+		try {
+			Runtime run = Runtime.getRuntime();
+			Process p = run.exec("mkdir "+tempDirPath+files);
+			p.waitFor();
+		    p.destroy();
+		} catch(Exception e){
+			e.printStackTrace();
+		}
+		return tempDirPath + files + "/";
+	}
+	
+	private String getDuName(String serviceName){
+		String duTemp = serviceName.substring(1);
+		return serviceName.substring(0, 1).toLowerCase().concat(duTemp);
+	}
+	
+	private ArrayList<String> findHandlerMethods(Place cinpl){
+		ArrayList<String> methodNames = new ArrayList<String>();
+		Place handlerPlace = null;
+		//Reconfigurated operation belongs to main branch
+		if(cinpl.getBranchId() == 0){
+			for(Place p : retrievedPN.getPlaces()){
+				if(p.getMainControlFlow() == cinpl.getMainControlFlow() - 1){
+					handlerPlace = p;
+					break;
+				}
+			}
+			//Reconfigurated operation is located after an AND-join structure 
+			if(handlerPlace == null){
+				//Find AND-join Transition
+				Transition andJT = null;
+				for(Arc a : retrievedPN.getArcs()){
+					if(a.getInputTransition() != null && a.getOutputPlace().getName().equals(cinpl.getName())){
+						andJT = a.getInputTransition();
+						break;
+					}
+				}
+				//Find all operations converging on AND-join Transition
+				for(Arc a : retrievedPN.getArcs()){
+					if(a.getOutputTransition() != null && 
+							a.getOutputTransition().getIdentifier().equals(andJT.getIdentifier())){
+						if(a.getInputPlace().getName().indexOf("Telco") >= 0){
+							methodNames.add("End" + a.getInputPlace().getName().
+									substring(0, a.getInputPlace().getName().length() - 1) + "-event.jar");
+						} else{
+							methodNames.add("EndWSInvocator-event.jar");
+						}
+					}
+				}
+			} else{
+				if(handlerPlace.getName().indexOf("Telco") >= 0){
+					methodNames.add("End" + handlerPlace.getName().substring(0, handlerPlace.getName().length() - 1) + "-event.jar");
+				} else{
+					methodNames.add("EndWSInvocator-event.jar");
+				}
+			}
+		//Reconfigurated operation belongs to an AND-split structure
+		} else{
+			//Reconfigurated operation is not the first on its branch
+			if(cinpl.getBranchControlFlow() > 1){
+				for(Place p : retrievedPN.getPlaces()){
+					if(p.getBranchId() == cinpl.getBranchId() && 
+							p.getBranchControlFlow() == cinpl.getBranchControlFlow() - 1){
+						handlerPlace = p;
+						break;
+					}
+				}
+				if(handlerPlace.getName().indexOf("Telco") >= 0){
+					methodNames.add("End" + handlerPlace.getName().substring(0, handlerPlace.getName().length() - 1) + "-event.jar");
+				} else{
+					methodNames.add("EndWSInvocator-event.jar");
+				}
+			//Reconfigurated operation is the first one on its branch
+			} else{
+				for(Place p : retrievedPN.getPlaces()){
+					if(p.getMainControlFlow() == cinpl.getMainControlFlow() - 2){
+						handlerPlace = p;
+						break;
+					}
+				}
+				if(handlerPlace.getName().indexOf("Telco") >= 0){
+					methodNames.add("End" + handlerPlace.getName().substring(0, handlerPlace.getName().length() - 1) + "-event.jar");
+				} else{
+					methodNames.add("EndWSInvocator-event.jar");
+				}
+			}
+		}
+		return methodNames;
 	}
 	
 	// TODO: Perform further operations if required in these methods.

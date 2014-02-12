@@ -28,6 +28,8 @@
             <pathelement location="lib/PetriNets.jar"/>
             <pathelement location="lib/OperationsRepository.jar"/>
             <pathelement location="lib/ContextInfo.jar"/>
+            <pathelement location="/usr/local/Mobicents-JSLEE/jboss-5.1.0.GA/lib/javassist.jar"/>
+            <pathelement location="lib/truezip-samples-7.7.2-jar-with-dependencies.jar"/>
         </path>
         <path id="path-Reconfiguration-sbb">
             <pathelement location="/home/julian/Telcomp-Workspace/ReconfigurationService/lib/DU/standard-components-du.jar/jars/standard-events11-jar-2.7.0.FINAL.jar"/>
