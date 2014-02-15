@@ -11,7 +11,12 @@ import java.util.Map.Entry;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
+import javassist.CannotCompileException;
 import javassist.ClassPool;
+import javassist.CtClass;
+import javassist.CtField;
+import javassist.CtMethod;
+import javassist.expr.FieldAccess;
 
 import javax.slee.ActivityContextInterface;
 import javax.slee.Address;
@@ -20,6 +25,7 @@ import javax.slee.SbbContext;
 
 import org.telcomp.events.EndReconfigurationEvent;
 import org.telcomp.events.StartReconfigurationEvent;
+import org.telcomp.utils.ExpressionEditor;
 
 import servicecategory.Input;
 import servicecategory.Operation;
@@ -36,6 +42,10 @@ import datamodel.PetriNet;
 import datamodel.Place;
 import datamodel.Token;
 import datamodel.Transition;
+import de.schlichtherle.truezip.file.TFile;
+import de.schlichtherle.truezip.file.TFileInputStream;
+import de.schlichtherle.truezip.file.TFileOutputStream;
+import de.schlichtherle.truezip.file.TVFS;
 
 public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 
@@ -43,6 +53,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private Datastore operationsRep;
 	private String serviceName;
 	private String operationName;
+	private Operation reconfigOperation;
 	private String userId;
 	private Place reconfigInputPlace;
 	private Place reconfigOutputPlace;
@@ -71,19 +82,18 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		reconfigurationInputs = event.getReconfigInputs();
 		
 		//****************************Test parameters***********************************
-		reconfigurationInputs.put("operationName", "MediaCallTelcoService");
+		/*reconfigurationInputs.put("operationName", "MediaCallTelcoService");
 		reconfigurationInputs.put("contextInfo0", "sendTwitterMessage0-1061698729");
 		reconfigurationInputs.put("contextInfo1", "SendEmailTelcoService0-1061698728");
 		reconfigurationInputs.put("contextInfo2", "MediaCallTelcoService0-1061698729");
 		reconfigurationInputs.put("branchControlFlow2", "0");
 		reconfigurationInputs.put("branchControlFlow1", "0");
-		reconfigurationInputs.put("mainControlFlow", "7");
+		reconfigurationInputs.put("mainControlFlow", "7");*/
 		//****************************Test parameters***********************************
 		
 		serviceName = (String) reconfigurationInputs.get("serviceName");
 		userId = (String) reconfigurationInputs.get("userid");
 		ArrayList<Place> IOPlaces = new ArrayList<Place>();
-		Operation reconfigOperation;
 		List<Operation> candidateOperations = new ArrayList<Operation>();
 		
 		//Retrieving Corresponding Petri Net from MongoDB
@@ -203,7 +213,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 					            //Update Petri Net and save it into DB
 					            updatePetriNet(candidateInPl, candidateOutPl);
 					            //Modify Converged Service SBB class
-					            updateConvergedService(candidateInPl);
+					            updateConvergedService(candidateInPl, candidateOutPl, op);
 					            //Finish Reconfiguration process
 								EndReconfigurationEvent endEvent = new EndReconfigurationEvent(true);
 								this.fireEndReconfigurationEvent(endEvent, aci, null);
@@ -415,6 +425,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		return placeName;
 	}
 	
+	//REVISAR ESTE METODO PARA DEFINIR EL ID DE LA OPERACION CANDIDATA
 	private int getOpId(Operation op){
 		int i = 0;
 		
@@ -587,12 +598,12 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		}
 	}
 	
-	private void updateConvergedService(Place candidateInPl){
+	private void updateConvergedService(Place candidateInPl, Place candidateOutPl, Operation candidateOp){
 		try{
-			//Unjar the DU of the orchestrator service and save its Sbb jar file in a temp directory
+			//Unjar the DU of the Converged Service and save its Sbb jar file in a temp directory
 			String newTempDir = this.getSbbJar(serviceName);
 			ClassPool cp = ClassPool.getDefault();
-			//Inserting required Class definitions to ClassPool to modify orchestrator service Class
+			//Inserting required Class definitions to ClassPool to modify Converged service Class
 			cp.insertClassPath(newTempDir + serviceName + sbbJarCmpt);
 			//JAIN SLEE library included to avoid compilation errors
 			cp.insertClassPath(deployPath + "mobicents-slee/lib/jain-slee-1.1.jar");
@@ -602,6 +613,54 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 				System.out.println("Handler Method jar: "+s);
 				cp.insertClassPath(neededJarsPath + s);
 			}
+			//Get Converged Service Class instance
+			CtClass ctclass = cp.get(sbbPath + serviceName + sbbClassCmpt);
+			//Add new operation fields into SBB class
+			CtField wsdl = CtField.make("static java.lang.String " + candidateInPl.getName() + 
+					"wsdl = \""+candidateOp.getServiceLocationURI()+"\";", ctclass);
+			CtField operation = CtField.make("static java.lang.String " + candidateInPl.getName() + 
+					"operation = \""+candidateOp.getOperationName()+"\";", ctclass);
+			CtField opInputs = CtField.make("static java.util.HashMap " + candidateInPl.getName() + 
+					"operationInputs = new java.util.HashMap();", ctclass);
+			ctclass.addField(wsdl);
+			ctclass.addField(operation);
+			ctclass.addField(opInputs);
+			//Add I/O needed variables into SBB class
+			addIOFileds(candidateInPl, candidateOutPl, ctclass);
+			
+			for(String mn : handlerMethods){
+				String methodName = "on" + mn.substring(0, mn.indexOf("-")) + "Event";
+				CtMethod method = ctclass.getDeclaredMethod(methodName);
+				
+				method.instrument(new ExpressionEditor(candidateInPl.getTokens().size(), candidateInPl.getName()){
+					public void edit(FieldAccess f){
+						if(f.getFieldName().equals(reconfigInputPlace.getName()+"operationInputs")){
+							this.setFlag(this.getFlag() + 1);
+							if(this.getFlag() == this.getInputsNumber()){
+								try {
+									f.replace("{$_ = $proceed($$); "+reconfigInputPlace.getName()+"wsdl = "+
+								this.getCandidateOpName()+"wsdl;}");
+								} catch (CannotCompileException e) {
+									e.printStackTrace();
+								}
+							}
+						}
+					}
+				});
+			}
+			
+			//Write the reconfigurated SBB Class file in the temporal directory
+			ctclass.writeFile(newTempDir);
+			//Defrost so it can be modified again and Detach so it's unloaded from ClassPool
+			ctclass.defrost();
+			ctclass.detach();
+			
+			//Getting the path of the reconfigurated SBB Class file
+			String newClassFilePath = newTempDir + sbbPath.replace(".", "/") + serviceName + sbbClassCmpt + ".class";
+			//Copying the reconfigurated SBB Class file into its corresponding Deloyable Unit
+			this.updateDUJar(serviceName, newClassFilePath);
+			//Deleting all temporal files created during the reconfiguration
+			this.deleteTemporals(newTempDir);
 			
 		} catch (Exception e){
 			e.printStackTrace();
@@ -647,6 +706,34 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private String getDuName(String serviceName){
 		String duTemp = serviceName.substring(1);
 		return serviceName.substring(0, 1).toLowerCase().concat(duTemp);
+	}
+	
+	private void updateDUJar(String serviceName, String newClassFile){
+		TFile tFileRead = new TFile(newClassFile);
+		TFile tFileWrite = new TFile(deployPath + this.getDuName(serviceName) + duJarCmpt + "/jars/" + 
+				serviceName + sbbJarCmpt + "/" + sbbPath.replace(".", "/") + serviceName + sbbClassCmpt + ".class");
+		try {
+			TFileInputStream tfIs = new TFileInputStream(tFileRead);
+			TFileOutputStream tfOs = new TFileOutputStream(tFileWrite);
+			while(tfIs.available() > 0){
+				tfOs.write(tfIs.read());
+			}
+			tfIs.close();
+			tfOs.close();
+			TVFS.umount();
+		} catch (Exception e) {
+			e.printStackTrace();
+		} 
+	}
+	
+	private void deleteTemporals(String directory){
+		String temporal = directory.substring(0, directory.length()-1);
+		TFile temp = new TFile(temporal);
+		try {
+			temp.rm_r();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 	
 	private ArrayList<String> findHandlerMethods(Place cinpl){
@@ -721,6 +808,64 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			}
 		}
 		return methodNames;
+	}
+	
+	private void addIOFileds(Place cinpl, Place coutpl, CtClass ctclass) {
+		try{
+			String className = null;
+			int i = 0;
+
+			for (Token t : cinpl.getTokens()) {
+				switch (t.getDataType()) {
+					case "String": {
+						className = "java.lang.String";
+						break;
+					}
+					case "int": {
+						className = "int";
+						break;
+					}
+					case "List<String>":{
+						className = "java.util.List";
+						break;
+					}
+				}
+				CtField inputName = CtField.make("static java.lang.String " + cinpl.getName() + "ipn" + i
+								+ " = \"" + t.getDestiny() + "\";", ctclass);
+				CtField inputValue = CtField.make("static " + className + " " + cinpl.getName() + "ipv" + i + ";", ctclass);
+				ctclass.addField(inputName);
+				ctclass.addField(inputValue);
+				i++;
+			}
+			
+			i = 0;
+			
+			for (Token t : coutpl.getTokens()) {
+				switch (t.getDataType()) {
+					case "String": {
+						className = "java.lang.String";
+						break;
+					}
+					case "int": {
+						className = "int";
+						break;
+					}
+					case "List<String>":{
+						className = "java.util.List";
+						break;
+					}
+				}
+				
+				CtField outputName = CtField.make("static java.lang.String "+ coutpl.getName() + 
+						"opn" + i + " = \"" + t.getSource() + "\";", ctclass);
+				CtField outputValue = CtField.make("static " + className + " " + coutpl.getName() + "opv" + i + ";", ctclass);
+				ctclass.addField(outputName);
+				ctclass.addField(outputValue);
+				i++;
+			}
+		} catch(Exception e){
+			e.printStackTrace();
+		}
 	}
 	
 	// TODO: Perform further operations if required in these methods.
