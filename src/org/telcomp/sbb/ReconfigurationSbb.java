@@ -59,6 +59,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 	private Place reconfigOutputPlace;
 	private PetriNet retrievedPN;
 	private HashMap<String, Object> reconfigurationInputs;
+	private boolean prevDA = false;
 	
 	private final String deployPath = "/usr/local/Mobicents-JSLEE/jboss-5.1.0.GA/server/default/deploy/";
 	private final String tempDirPath = "/usr/local/Mobicents-JSLEE/temp/";
@@ -146,6 +147,8 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			candidateOperations = operationsRep.find(Operation.class).field("category").equal(reconfigOperation.getCategory()).asList();
 			boolean reconfigurationCheck = false;
 			for(Operation op : candidateOperations){
+				//Flag that indicates that a previous DA operation needs to be modified
+				prevDA = false;
 				//Discarding reconfigurated Operation as a candidate
 				if(op.getId() != reconfigOperation.getId() && !(op.getOperationName().indexOf("Telco") >= 0)){
 				//if(op.getId() != reconfigOperation.getId()){
@@ -379,6 +382,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 								"input", ddi.getDataType(), dt.getDestiny(), ddi.getInputName());
 						candidateInPl.getTokens().add(ntkn);
 						inputsCheck.put(entry.getKey(), "true");
+						prevDA = true;
 					}
 				}
 			}
@@ -425,7 +429,6 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		return placeName;
 	}
 	
-	//REVISAR ESTE METODO PARA DEFINIR EL ID DE LA OPERACION CANDIDATA
 	private int getOpId(Operation op){
 		int i = 0;
 		
@@ -607,14 +610,32 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			cp.insertClassPath(newTempDir + serviceName + sbbJarCmpt);
 			//JAIN SLEE library included to avoid compilation errors
 			cp.insertClassPath(deployPath + "mobicents-slee/lib/jain-slee-1.1.jar");
+			cp.insertClassPath(neededJarsPath + "EndWSInvocator-event.jar");
 			//Find out which are the handler methods that invoke the reconfigurated operation and include them in Classpath
 			ArrayList<String> handlerMethods = findHandlerMethods(candidateInPl);
 			for(String s : handlerMethods){
-				System.out.println("Handler Method jar: "+s);
 				cp.insertClassPath(neededJarsPath + s);
 			}
 			//Get Converged Service Class instance
 			CtClass ctclass = cp.get(sbbPath + serviceName + sbbClassCmpt);
+			
+			//Correctly set DA operation parameter for new service if needed
+			if(prevDA){
+				for(Token t : candidateInPl.getTokens()){
+					for(Place p : retrievedPN.getPlaces()){
+						if(p.getIdentifier().indexOf("OutputPlace") >= 0 && p.getName().indexOf("GetDataTelcoService") >= 0){
+							for(Token t1 : p.getTokens()){
+								if(t.getSource().equals(t1.getDestiny())){
+									String subtype = getInputSubtype(t.getDestiny(), candidateOp);
+									CtMethod method = ctclass.getDeclaredMethod("setSbbContext");
+									method.insertAfter("{"+p.getName()+"ip1 = \""+subtype+"\";}");
+								}
+							}
+						}
+					}
+				}
+			}
+			
 			//Add new operation fields into SBB class
 			CtField wsdl = CtField.make("static java.lang.String " + candidateInPl.getName() + 
 					"wsdl = \""+candidateOp.getServiceLocationURI()+"\";", ctclass);
@@ -627,22 +648,45 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			ctclass.addField(opInputs);
 			//Add I/O needed variables into SBB class
 			addIOFileds(candidateInPl, candidateOutPl, ctclass);
+			//Set necessary code to map every input of the new operation
+			String pMapping = getParameterMapping(candidateInPl);
 			
+			//Input parameters mapping on SBB code
 			for(String mn : handlerMethods){
 				String methodName = "on" + mn.substring(0, mn.indexOf("-")) + "Event";
 				CtMethod method = ctclass.getDeclaredMethod(methodName);
 				
-				method.instrument(new ExpressionEditor(candidateInPl.getTokens().size(), candidateInPl.getName()){
+				method.instrument(new ExpressionEditor(candidateInPl.getTokens().size(), candidateInPl.getName(), pMapping){
 					public void edit(FieldAccess f){
 						if(f.getFieldName().equals(reconfigInputPlace.getName()+"operationInputs")){
 							this.setFlag(this.getFlag() + 1);
 							if(this.getFlag() == this.getInputsNumber()){
 								try {
-									f.replace("{$_ = $proceed($$); "+reconfigInputPlace.getName()+"wsdl = "+
-								this.getCandidateOpName()+"wsdl;}");
+									f.replace("{$_ = $proceed($$); "+this.getParameterMapping()+reconfigInputPlace.getName()+"wsdl = "+
+											this.getCandidateOpName()+"wsdl; "+reconfigInputPlace.getName()+"operation = "+
+											this.getCandidateOpName()+"operation; "+reconfigInputPlace.getName()+"operationInputs.clear(); "+
+											reconfigInputPlace.getName()+"operationInputs = "+this.getCandidateOpName()+"operationInputs;}");
 								} catch (CannotCompileException e) {
 									e.printStackTrace();
 								}
+							}
+						}
+					}
+				});
+			}
+			
+			//Analizar cual salida corresponde con cual y ver cuando es List o String!!!!!!!!!!!!!
+			//Output parameters mapping on SBB code
+			for(int k=0; k<candidateOutPl.getTokens().size(); k++){
+				CtMethod mthd = ctclass.getDeclaredMethod("onEndWSInvocatorEvent");
+				mthd.instrument(new ExpressionEditor(k, candidateOutPl.getName(), null){
+					public void edit(FieldAccess f){
+						if(f.getFieldName().equals(reconfigInputPlace.getName()+"opv"+this.getFlag())){
+							try{
+								f.replace("{$_ = $proceed($$); " + this.getCandidateOpName() + "opv"+this.getFlag() + 
+										" = (java.lang.String) " + f.getFieldName() + ".get(0);}");
+							} catch(Exception e){
+								e.printStackTrace();
 							}
 						}
 					}
@@ -657,7 +701,7 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 			
 			//Getting the path of the reconfigurated SBB Class file
 			String newClassFilePath = newTempDir + sbbPath.replace(".", "/") + serviceName + sbbClassCmpt + ".class";
-			//Copying the reconfigurated SBB Class file into its corresponding Deloyable Unit
+			//Copying the reconfigurated SBB Class file into its corresponding Deployable Unit
 			this.updateDUJar(serviceName, newClassFilePath);
 			//Deleting all temporal files created during the reconfiguration
 			this.deleteTemporals(newTempDir);
@@ -866,6 +910,53 @@ public abstract class ReconfigurationSbb implements javax.slee.Sbb {
 		} catch(Exception e){
 			e.printStackTrace();
 		}
+	}
+	
+	private String getParameterMapping(Place cinpl){
+		String mapping = "";
+		
+		for(Token t : cinpl.getTokens()){
+			String tokenId = t.getIdentifier().substring(t.getIdentifier().length() - 1);
+			String snippet = cinpl.getName() + "ipv" + tokenId + " = " + getParameterSource(t.getSource()) + ";";
+			snippet = snippet + " " + cinpl.getName() + "operationInputs.put(" + cinpl.getName() + "ipn" + tokenId + 
+					", " + cinpl.getName() + "ipv" + tokenId + ");";
+			mapping = mapping + snippet;
+		}
+		
+		return mapping;
+	}
+	
+	private String getParameterSource(String sourceName){
+		String source = "";
+		
+		for(Place p : retrievedPN.getPlaces()){
+			for(Token t : p.getTokens()){
+				if(t.getDestiny().equals(sourceName)){
+					String tid = t.getIdentifier().substring(t.getIdentifier().length() - 1);
+					if(p.getIdentifier().indexOf("StartPlace") >= 0){
+						source = "startpv" + tid;
+					} else if(p.getName().indexOf("TelcoService") >= 0){
+						source = p.getName() + "op" + tid;
+					} else{
+						source = p.getName() + "opv" + tid;
+					}
+				}
+			}
+		}
+		
+		return source;
+	}
+	
+	private String getInputSubtype(String name, Operation cop){
+		String subtype = null;
+		
+		for(Input i : cop.getInputs()){
+			if(i.getInputName().equals(name)){
+				subtype = i.getSubType();
+			}
+		}
+		
+		return subtype;
 	}
 	
 	// TODO: Perform further operations if required in these methods.
